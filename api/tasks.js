@@ -5,6 +5,7 @@ import {
   replaceTasksFromRawText,
   replaceTasksFromTaskMap,
 } from '../lib/supabase.js'
+import { requireAuth } from '../lib/auth.js'
 
 function sendJson(res, statusCode, payload) {
   res.status(statusCode).json(payload)
@@ -12,6 +13,10 @@ function sendJson(res, statusCode, payload) {
 
 export default async function handler(req, res) {
   try {
+    if (!requireAuth(req, res)) {
+      return
+    }
+
     if (req.method === 'GET') {
       const [taskMap, rawText] = await Promise.all([loadTasksAsTaskMap(), loadTasksAsRawText()])
       sendJson(res, 200, {

@@ -112,6 +112,12 @@ npm run import:supabase
 
 - [.env.example](C:/Users/Administrator/Desktop/galxe-reward-task/.env.example)
 
+认证相关环境变量：
+
+- `APP_LOGIN_USERNAME`
+- `APP_LOGIN_PASSWORD`
+- `AUTH_SESSION_SECRET`
+
 Vercel 配置：
 
 - [vercel.json](C:/Users/Administrator/Desktop/galxe-reward-task/vercel.json)

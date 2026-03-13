@@ -1,4 +1,5 @@
 import { queryCampaignWinners } from '../lib/galxe.js'
+import { requireAuth } from '../lib/auth.js'
 import { getTableNames, loadAddressTexts } from '../lib/supabase.js'
 
 function sendJson(res, statusCode, payload) {
@@ -7,6 +8,10 @@ function sendJson(res, statusCode, payload) {
 
 export default async function handler(req, res) {
   try {
+    if (!requireAuth(req, res)) {
+      return
+    }
+
     if (req.method !== 'POST') {
       sendJson(res, 405, { message: 'Method Not Allowed' })
       return
