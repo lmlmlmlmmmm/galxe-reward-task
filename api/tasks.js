@@ -4,7 +4,7 @@ import {
   loadTasksAsTaskMap,
   replaceTasksFromRawText,
   replaceTasksFromTaskMap,
-} from '../lib/supabase.js'
+} from '../lib/sqlite.js'
 import { requireAuth } from '../lib/auth.js'
 
 function sendJson(res, statusCode, payload) {
@@ -22,7 +22,7 @@ export default async function handler(req, res) {
       sendJson(res, 200, {
         taskMap,
         rawText,
-        source: `supabase:${getTableNames().tasks}`,
+        source: `sqlite:${getTableNames().tasks}`,
       })
       return
     }

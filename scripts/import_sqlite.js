@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { getTableNames, replaceAddressTable, replaceTasksFromRawText } from '../lib/supabase.js'
+import { getTableNames, replaceAddressTable, replaceTasksFromRawText } from '../lib/sqlite.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
@@ -32,7 +32,7 @@ async function main() {
   await replaceAddressTable(tableNames.evmAddress, parseAddressText(evmText))
   await replaceAddressTable(tableNames.solAddress, parseAddressText(solText))
 
-  console.log('Supabase 导入完成：')
+  console.log('SQLite 导入完成：')
   console.log(`- tasks -> ${tableNames.tasks}`)
   console.log(`- evm_address -> ${tableNames.evmAddress}`)
   console.log(`- sol_address -> ${tableNames.solAddress}`)

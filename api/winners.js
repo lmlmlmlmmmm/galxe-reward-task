@@ -1,6 +1,6 @@
 import { queryCampaignWinners } from '../lib/galxe.js'
 import { requireAuth } from '../lib/auth.js'
-import { getTableNames, loadAddressTexts } from '../lib/supabase.js'
+import { getTableNames, loadAddressTexts } from '../lib/sqlite.js'
 
 function sendJson(res, statusCode, payload) {
   res.status(statusCode).json(payload)
@@ -30,8 +30,8 @@ export default async function handler(req, res) {
     sendJson(res, 200, {
       ...result,
       source: {
-        evm: `supabase:${getTableNames().evmAddress}`,
-        sol: `supabase:${getTableNames().solAddress}`,
+        evm: `sqlite:${getTableNames().evmAddress}`,
+        sol: `sqlite:${getTableNames().solAddress}`,
       },
     })
   } catch (error) {
