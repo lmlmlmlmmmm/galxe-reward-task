@@ -103,6 +103,10 @@ npm run import:sqlite
 
 ## 部署
 
+服务器部署文档：
+
+- [DEPLOY_SERVER.md](DEPLOY_SERVER.md)
+
 环境变量样例：
 
 - [.env.example](.env.example)
