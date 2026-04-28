@@ -13,6 +13,43 @@ export function compareDateKey(leftDate, rightDate) {
   return leftDay - rightDay
 }
 
+function parseTimeToMinutes(value) {
+  const normalizedValue = String(value || '').trim()
+  if (!timePattern.test(normalizedValue)) {
+    return null
+  }
+
+  const [hour, minute] = normalizedValue.split(':').map((item) => Number(item) || 0)
+  if (hour > 23 || minute > 59) {
+    return null
+  }
+
+  return hour * 60 + minute
+}
+
+export function compareTaskTime(leftTask, rightTask) {
+  const leftMinutes = parseTimeToMinutes(leftTask?.time)
+  const rightMinutes = parseTimeToMinutes(rightTask?.time)
+
+  if (leftMinutes == null && rightMinutes == null) {
+    return String(leftTask?.url || '').localeCompare(String(rightTask?.url || ''), 'zh-CN')
+  }
+
+  if (leftMinutes == null) {
+    return 1
+  }
+
+  if (rightMinutes == null) {
+    return -1
+  }
+
+  if (leftMinutes !== rightMinutes) {
+    return leftMinutes - rightMinutes
+  }
+
+  return String(leftTask?.url || '').localeCompare(String(rightTask?.url || ''), 'zh-CN')
+}
+
 function buildTaskId(dateKey, index, url) {
   const suffix = String(url || 'task')
     .replace(/^https?:\/\//i, '')
@@ -119,6 +156,7 @@ export function normalizeTaskMap(taskMap) {
     const normalizedTasks = (taskList || [])
       .map((task, index) => normalizeTask(task, dateKey, index))
       .filter((task) => task.url)
+      .sort((leftTask, rightTask) => compareTaskTime(leftTask, rightTask))
 
     if (normalizedTasks.length) {
       nextMap[dateKey] = normalizedTasks

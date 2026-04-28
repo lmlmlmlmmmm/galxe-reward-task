@@ -1,5 +1,5 @@
 <script setup>
-import { Lock, User } from '@element-plus/icons-vue'
+import { Lock, User, Moon, Sunny } from '@element-plus/icons-vue'
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import App from './App.vue'
@@ -12,6 +12,7 @@ const form = ref({
   password: '',
 })
 const submitting = ref(false)
+const isDark = ref(false)
 
 async function checkSession() {
   checkingSession.value = true
@@ -85,200 +86,170 @@ async function handleLogout() {
   }
 }
 
+function toggleTheme() {
+  isDark.value = !isDark.value
+  if (isDark.value) {
+    document.documentElement.classList.add('dark')
+    localStorage.setItem('theme', 'dark')
+  } else {
+    document.documentElement.classList.remove('dark')
+    localStorage.setItem('theme', 'light')
+  }
+}
+
 onMounted(() => {
   checkSession()
+  isDark.value = document.documentElement.classList.contains('dark')
 })
 </script>
 
 <template>
-  <div v-if="checkingSession" class="auth-shell auth-shell-loading">
-    <div class="auth-loading-card">
-      <div class="auth-loading-mark"></div>
-      <p class="auth-loading-text">正在验证登录状态...</p>
-    </div>
+  <div v-if="checkingSession" class="auth-state">
+    <div class="auth-spinner"></div>
+    <p class="auth-state__text">正在验证登录状态…</p>
   </div>
 
-  <div v-else-if="authenticated" class="auth-app-shell">
+  <div v-else-if="authenticated" class="auth-app">
     <header class="auth-topbar">
-      <div class="auth-topbar-copy">
-        <span class="auth-topbar-label">Protected Access</span>
-        <strong class="auth-topbar-user">{{ username }}</strong>
+      <div class="auth-topbar__left">
+        <div class="auth-topbar__user">
+          <span class="auth-topbar__avatar">{{ (username || '?').slice(0, 1).toUpperCase() }}</span>
+          <div class="auth-topbar__info">
+            <strong class="auth-topbar__name">{{ username }}</strong>
+            <span class="auth-topbar__hint">已登录</span>
+          </div>
+        </div>
       </div>
-      <el-button plain @click="handleLogout">退出登录</el-button>
+      
+      <div class="auth-topbar__right">
+        <el-button 
+          class="theme-toggle" 
+          circle 
+          :icon="isDark ? Sunny : Moon" 
+          @click="toggleTheme" 
+        />
+        <el-divider direction="vertical" />
+        <el-button text @click="handleLogout">退出登录</el-button>
+      </div>
     </header>
     <App />
   </div>
 
-  <div v-else class="auth-shell">
-    <div class="auth-panel">
-      <section class="auth-hero">
-        <span class="auth-kicker">GALXE TASK CONSOLE</span>
-        <h1 class="auth-title">登录后才能访问任务面板</h1>
-        <p class="auth-subtitle">账号和密码由服务端环境变量控制，浏览器不会拿到原始凭据。</p>
-      </section>
+  <div v-else class="auth-state">
+    <div class="auth-card">
+      <div class="auth-card__head">
+        <h1 class="auth-card__title">登录</h1>
+        <p class="auth-card__desc">使用服务端配置的账号与密码进入 Galxe 任务面板</p>
+      </div>
 
-      <section class="auth-card">
-        <div class="auth-card-head">
-          <h2 class="auth-card-title">账号登录</h2>
-          <p class="auth-card-desc">输入环境变量中配置的账号密码。</p>
-        </div>
+      <el-form label-position="top" class="auth-form" @submit.prevent="handleLogin">
+        <el-form-item label="账号">
+          <el-input v-model="form.username" :prefix-icon="User" autocomplete="username" />
+        </el-form-item>
 
-        <el-form label-position="top" @submit.prevent="handleLogin">
-          <el-form-item label="账号">
-            <el-input v-model="form.username" :prefix-icon="User" autocomplete="username" />
-          </el-form-item>
+        <el-form-item label="密码">
+          <el-input
+            v-model="form.password"
+            :prefix-icon="Lock"
+            show-password
+            type="password"
+            autocomplete="current-password"
+            @keyup.enter="handleLogin"
+          />
+        </el-form-item>
 
-          <el-form-item label="密码">
-            <el-input
-              v-model="form.password"
-              :prefix-icon="Lock"
-              show-password
-              type="password"
-              autocomplete="current-password"
-              @keyup.enter="handleLogin"
-            />
-          </el-form-item>
+        <el-button class="auth-form__submit" type="primary" :loading="submitting" @click="handleLogin">
+          登录
+        </el-button>
+      </el-form>
 
-          <el-button class="auth-submit" type="primary" :loading="submitting" @click="handleLogin">
-            登录
-          </el-button>
-        </el-form>
-      </section>
+      <div class="auth-card__footer">
+        <el-button 
+          link 
+          class="theme-toggle--footer" 
+          :icon="isDark ? Sunny : Moon" 
+          @click="toggleTheme"
+        >
+          切换{{ isDark ? '浅色' : '深色' }}模式
+        </el-button>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.auth-shell {
+.auth-state {
   min-height: 100vh;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 14px;
   padding: 24px;
-  background:
-    radial-gradient(circle at top left, rgba(245, 158, 11, 0.2), transparent 34%),
-    radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.22), transparent 38%),
-    linear-gradient(135deg, #07111f 0%, #111827 42%, #1f2937 100%);
+  background-color: var(--bg-body);
 }
 
-.auth-shell-loading {
-  background:
-    radial-gradient(circle at center, rgba(14, 165, 233, 0.2), transparent 24%),
-    linear-gradient(135deg, #07111f 0%, #111827 42%, #1f2937 100%);
-}
-
-.auth-panel {
-  width: min(1080px, 100%);
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(340px, 420px);
-  gap: 24px;
-  align-items: stretch;
-}
-
-.auth-hero,
-.auth-card,
-.auth-loading-card {
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 28px;
-  backdrop-filter: blur(20px);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
-}
-
-.auth-hero {
-  position: relative;
-  overflow: hidden;
-  padding: 40px;
-  background:
-    radial-gradient(circle at 20% 20%, rgba(245, 158, 11, 0.18), transparent 26%),
-    linear-gradient(160deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.82));
-}
-
-.auth-hero::after {
-  content: '';
-  position: absolute;
-  right: -72px;
-  bottom: -72px;
-  width: 220px;
-  height: 220px;
+.auth-spinner {
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(14, 165, 233, 0.28), transparent 68%);
+  border: 2.5px solid var(--border-color);
+  border-top-color: var(--accent-primary);
+  animation: spin 0.7s linear infinite;
 }
 
-.auth-kicker {
-  display: inline-flex;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(245, 158, 11, 0.14);
-  color: #fcd34d;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-}
-
-.auth-title {
-  margin: 18px 0 12px;
-  color: #f8fafc;
-  font-size: clamp(32px, 5vw, 54px);
-  line-height: 1.05;
-  font-weight: 900;
-}
-
-.auth-subtitle {
-  max-width: 520px;
-  color: rgba(226, 232, 240, 0.8);
-  font-size: 16px;
-  line-height: 1.7;
-}
-
-.auth-card,
-.auth-loading-card {
-  padding: 28px;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.auth-card-head {
-  margin-bottom: 18px;
-}
-
-.auth-card-title {
+.auth-state__text {
   margin: 0;
-  color: #f8fafc;
-  font-size: 28px;
-  font-weight: 900;
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
-.auth-card-desc,
-.auth-loading-text {
+.auth-card {
+  width: min(400px, 100%);
+  padding: 32px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-md);
+}
+
+.auth-card__head {
+  margin-bottom: 24px;
+}
+
+.auth-card__title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+
+.auth-card__desc {
   margin: 8px 0 0;
-  color: rgba(226, 232, 240, 0.7);
-  line-height: 1.6;
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.5;
 }
 
-.auth-submit {
+.auth-card__footer {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  justify-content: center;
+}
+
+.auth-form__submit {
   width: 100%;
-  height: 46px;
+  height: 44px;
   margin-top: 8px;
-  border: none;
-  background: linear-gradient(135deg, #f59e0b 0%, #f97316 48%, #0ea5e9 100%);
-  box-shadow: 0 18px 32px rgba(249, 115, 22, 0.28);
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 15px;
 }
 
-.auth-loading-card {
-  min-width: min(420px, 100%);
-  text-align: center;
-}
-
-.auth-loading-mark {
-  width: 54px;
-  height: 54px;
-  margin: 0 auto;
-  border-radius: 50%;
-  border: 3px solid rgba(255, 255, 255, 0.12);
-  border-top-color: #f59e0b;
-  animation: spin 0.9s linear infinite;
-}
-
-.auth-app-shell {
+.auth-app {
   min-height: 100vh;
 }
 
@@ -290,53 +261,86 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 14px 18px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-  background: rgba(7, 17, 31, 0.92);
-  backdrop-filter: blur(18px);
+  padding: 0 24px;
+  height: var(--header-height);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  backdrop-filter: blur(8px);
 }
 
-.auth-topbar-copy {
+.auth-topbar__left,
+.auth-topbar__right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
-.auth-topbar-label {
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(245, 158, 11, 0.14);
-  color: #f59e0b;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+.auth-topbar__user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-.auth-topbar-user {
-  color: #f8fafc;
+.auth-topbar__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-muted);
+  color: var(--accent-primary);
+  font-weight: 700;
   font-size: 14px;
 }
 
-:deep(.auth-card .el-form-item__label) {
-  color: #e2e8f0;
-  font-weight: 700;
+.auth-topbar__info {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
 }
 
-:deep(.auth-card .el-input__wrapper) {
-  min-height: 46px;
-  border-radius: 14px;
-  background: rgba(15, 23, 42, 0.88);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06) inset;
+.auth-topbar__name {
+  font-size: 14px;
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
-:deep(.auth-card .el-input__inner) {
-  color: #f8fafc;
+.auth-topbar__hint {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
-:deep(.auth-card .el-input__prefix-inner),
-:deep(.auth-card .el-input__suffix-inner),
-:deep(.auth-card .el-icon) {
-  color: #f59e0b;
+.theme-toggle {
+  border: none;
+  background: transparent;
+  font-size: 18px;
+  color: var(--text-secondary);
+}
+
+.theme-toggle:hover {
+  color: var(--accent-primary);
+  background: var(--bg-muted);
+}
+
+.theme-toggle--footer {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+:deep(.auth-form .el-form-item) {
+  margin-bottom: 20px;
+}
+
+:deep(.auth-form .el-form-item__label) {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 13px;
+  padding-bottom: 6px;
+}
+
+:deep(.auth-form .el-input__wrapper) {
+  min-height: 44px;
 }
 
 @keyframes spin {
@@ -345,18 +349,17 @@ onMounted(() => {
   }
 }
 
-@media (max-width: 900px) {
-  .auth-panel {
-    grid-template-columns: 1fr;
-  }
-
-  .auth-hero,
-  .auth-card {
-    padding: 24px;
-  }
-
+@media (max-width: 600px) {
   .auth-topbar {
-    flex-wrap: wrap;
+    padding: 0 16px;
+  }
+
+  .auth-card {
+    padding: 32px 24px;
+    border: none;
+    box-shadow: none;
+    background: transparent;
   }
 }
 </style>
+

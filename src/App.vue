@@ -1,17 +1,17 @@
 <script setup>
 import axios from 'axios'
-import Sortable from 'sortablejs'
-import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, h, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   compareDateKey,
+  compareTaskTime,
   normalizeNeedCreate,
   sequenceTextToValues,
   valuesToSequenceText,
 } from './utils/taskStore'
 
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
-const SOURCE_PATH = 'Supabase tasks'
+const SOURCE_PATH = '/api/tasks'
 const SOURCE_ENDPOINT = `${API_BASE_URL}/api/tasks`
 const WINNER_ENDPOINT = `${API_BASE_URL}/api/winners`
 const GALXE_ENDPOINT = 'https://graphigo.prd.galaxy.eco/query'
@@ -24,6 +24,16 @@ const needCreateOptions = [
   { value: '2', label: '不做' },
   { value: '3', label: '待定' },
 ]
+const needCreateLabelMap = {
+  '1': '做',
+  '2': '不做',
+  '3': '待定',
+}
+const needCreateTagTypeMap = {
+  '1': 'success',
+  '2': 'info',
+  '3': 'warning',
+}
 const GALXE_LOAD_TASK_QUERY = `query CampaignList($input: ListCampaignInput!) {
   campaigns(input: $input) {
     pageInfo {
@@ -49,25 +59,42 @@ const lastSavedAt = ref(null)
 const lastSaveError = ref('')
 const loadingCanDoTasks = ref(false)
 const queryingTaskId = ref('')
-const taskTableRef = ref(null)
 
 let suspendAutoSave = false
 let autoSaveTimer = null
 let pendingSaveAfterCurrent = false
-let taskSorter = null
 
 const sortedDates = computed(() => Object.keys(groupedTasks.value).sort(compareDateKey))
 const currentDate = computed(() => selectedDate.value || sortedDates.value[0] || '')
 const currentDateTasks = computed(() => groupedTasks.value[currentDate.value] || [])
 const totalTaskCount = computed(() => Object.values(groupedTasks.value).reduce((sum, taskList) => sum + taskList.length, 0))
+const doneTaskCount = computed(() =>
+  Object.values(groupedTasks.value).reduce(
+    (sum, taskList) => sum + taskList.filter((task) => normalizeNeedCreate(task.needCreate) === '1').length,
+    0,
+  ),
+)
+const pendingTaskCount = computed(() =>
+  Object.values(groupedTasks.value).reduce(
+    (sum, taskList) => sum + taskList.filter((task) => normalizeNeedCreate(task.needCreate) === '3').length,
+    0,
+  ),
+)
+const currentDateDoneCount = computed(() =>
+  currentDateTasks.value.filter((task) => normalizeNeedCreate(task.needCreate) === '1').length,
+)
+const currentDatePendingCount = computed(() =>
+  currentDateTasks.value.filter((task) => normalizeNeedCreate(task.needCreate) === '3').length,
+)
+const currentDateEmptyTimeCount = computed(() => currentDateTasks.value.filter((task) => !String(task.time || '').trim()).length)
 
 const saveIndicator = computed(() => {
   if (loading.value) {
-    return { type: 'info', text: '正在读取云端任务源…' }
+    return { type: 'info', text: '正在读取任务数据…' }
   }
 
   if (saving.value) {
-    return { type: 'warning', text: '正在自动保存到云端…' }
+    return { type: 'warning', text: '正在自动保存变更…' }
   }
 
   if (lastSaveError.value) {
@@ -79,34 +106,34 @@ const saveIndicator = computed(() => {
   }
 
   if (sourceLoaded.value) {
-    return { type: 'success', text: '已连接 Supabase，页面修改会自动保存' }
+    return { type: 'success', text: '任务数据已就绪，页面修改会自动保存' }
   }
 
-  return { type: 'warning', text: '尚未读取到云端任务源' }
+  return { type: 'warning', text: '尚未读取到任务数据' }
 })
 
 const statusBanner = computed(() => {
   if (loading.value) {
     return {
       type: 'info',
-      title: '正在读取云端任务源',
-      description: `当前数据源：${SOURCE_PATH}`,
+      title: '正在读取任务数据',
+      description: `当前数据接口：${SOURCE_PATH}`,
     }
   }
 
   if (saving.value) {
     return {
       type: 'warning',
-      title: '正在自动保存到云端',
-      description: `当前数据源：${SOURCE_PATH}`,
+      title: '正在自动保存修改',
+      description: '你对任务列表的改动会自动同步到服务端。',
     }
   }
 
   if (lastSaveError.value) {
     return {
       type: 'error',
-      title: '保存云端任务源失败',
-      description: `${lastSaveError.value}。请确认 Vercel API 和 Supabase 环境变量已经配置完成。当前数据源：${SOURCE_PATH}`,
+      title: '自动保存失败',
+      description: `${lastSaveError.value}。请确认当前站点可以正常访问任务接口。`,
     }
   }
 
@@ -114,22 +141,22 @@ const statusBanner = computed(() => {
     return {
       type: 'success',
       title: `已自动保存 ${formatClock(lastSavedAt.value)}`,
-      description: `当前数据源：${SOURCE_PATH}`,
+      description: '任务清单已同步到服务端，可继续编辑。',
     }
   }
 
   if (sourceLoaded.value) {
     return {
       type: 'success',
-      title: '已读取云端任务源，页面修改会自动保存',
-      description: `当前数据源：${SOURCE_PATH}`,
+      title: '任务数据已加载完成',
+      description: '现在可以按日期管理任务、查询结果并继续补充新任务。',
     }
   }
 
   return {
     type: 'warning',
-    title: '还没有读取到云端任务源',
-    description: `请确认当前站点可以访问 Vercel API。当前数据源：${SOURCE_PATH}`,
+    title: '还没有读取到任务数据',
+    description: '请确认当前环境能够访问任务接口。',
   }
 })
 
@@ -171,6 +198,32 @@ function buildTaskId(dateKey, index, url) {
     .replace(/^-+|-+$/g, '') || 'task'
 
   return `${dateKey}-${index}-${suffix}`
+}
+
+function sortTaskList(taskList) {
+  taskList.sort((leftTask, rightTask) => compareTaskTime(leftTask, rightTask))
+  return taskList
+}
+
+function sortGroupedTasksMap(taskMap) {
+  const sortedMap = {}
+
+  Object.entries(taskMap || {})
+    .sort(([leftDate], [rightDate]) => compareDateKey(leftDate, rightDate))
+    .forEach(([dateKey, taskList]) => {
+      sortedMap[dateKey] = sortTaskList([...taskList])
+    })
+
+  return sortedMap
+}
+
+function syncCurrentDateTaskOrder() {
+  const dateKey = currentDate.value
+  if (!dateKey || !groupedTasks.value[dateKey]) {
+    return
+  }
+
+  sortTaskList(groupedTasks.value[dateKey])
 }
 
 function parseDateKeyToTargetDate(dateKey) {
@@ -291,15 +344,19 @@ function createTaskModel(task, dateKey, index) {
 function buildSerializableTaskMap() {
   const nextTaskMap = {}
 
-  Object.entries(groupedTasks.value).forEach(([dateKey, taskList]) => {
-    nextTaskMap[dateKey] = taskList.map((task) => ({
-      time: String(task.time || '').trim(),
-      url: String(task.url || '').trim(),
-      sequenceText: valuesToSequenceText(task.sequenceValues),
-      needCreate: normalizeNeedCreate(task.needCreate),
-      remark: String(task.remark || '').trim(),
-    }))
-  })
+  Object.entries(groupedTasks.value)
+    .sort(([leftDate], [rightDate]) => compareDateKey(leftDate, rightDate))
+    .forEach(([dateKey, taskList]) => {
+      nextTaskMap[dateKey] = [...taskList]
+        .sort((leftTask, rightTask) => compareTaskTime(leftTask, rightTask))
+        .map((task) => ({
+          time: String(task.time || '').trim(),
+          url: String(task.url || '').trim(),
+          sequenceText: valuesToSequenceText(task.sequenceValues),
+          needCreate: normalizeNeedCreate(task.needCreate),
+          remark: String(task.remark || '').trim(),
+        }))
+    })
 
   return nextTaskMap
 }
@@ -309,66 +366,6 @@ function clearAutoSaveTimer() {
     clearTimeout(autoSaveTimer)
     autoSaveTimer = null
   }
-}
-
-function destroyTaskSorter() {
-  if (taskSorter) {
-    taskSorter.destroy()
-    taskSorter = null
-  }
-}
-
-function getTaskTableBody() {
-  const tableEl = taskTableRef.value?.$el
-  if (!tableEl) {
-    return null
-  }
-
-  return tableEl.querySelector('.el-table__body-wrapper tbody')
-}
-
-function moveTaskItem(oldIndex, newIndex) {
-  const dateKey = currentDate.value
-  const taskList = groupedTasks.value[dateKey]
-
-  if (!taskList || oldIndex === newIndex) {
-    return
-  }
-
-  const movedItem = taskList.splice(oldIndex, 1)[0]
-  if (!movedItem) {
-    return
-  }
-
-  taskList.splice(newIndex, 0, movedItem)
-}
-
-async function initTaskSorter() {
-  await nextTick()
-  destroyTaskSorter()
-
-  const tbody = getTaskTableBody()
-  if (!tbody) {
-    return
-  }
-
-  taskSorter = Sortable.create(tbody, {
-    animation: 160,
-    handle: '.drag-handle',
-    ghostClass: 'drag-ghost',
-    chosenClass: 'drag-chosen',
-    dragClass: 'drag-dragging',
-    onEnd: (event) => {
-      const oldIndex = event.oldIndex
-      const newIndex = event.newIndex
-
-      if (oldIndex == null || newIndex == null || oldIndex === newIndex) {
-        return
-      }
-
-      moveTaskItem(oldIndex, newIndex)
-    },
-  })
 }
 
 function ensureDateBucket(dateKey) {
@@ -390,22 +387,22 @@ function applyTaskMap(taskMap) {
   })
 
   suspendAutoSave = true
-  groupedTasks.value = nextTaskMap
+  groupedTasks.value = sortGroupedTasksMap(nextTaskMap)
 
-  if (selectedDate.value && !nextTaskMap[selectedDate.value]) {
+  if (selectedDate.value && !groupedTasks.value[selectedDate.value]) {
     selectedDate.value = ''
   }
 
   if (!selectedDate.value) {
-    selectedDate.value = Object.keys(nextTaskMap).sort(compareDateKey)[0] || ''
+    selectedDate.value = Object.keys(groupedTasks.value).sort(compareDateKey)[0] || ''
   }
 
   sourceLoaded.value = true
   lastSaveError.value = ''
 
-  nextTick(() => {
+  setTimeout(() => {
     suspendAutoSave = false
-  })
+  }, 0)
 }
 
 async function requestSource(method, rawText = '') {
@@ -432,7 +429,7 @@ async function requestSource(method, rawText = '') {
   }
 
   if (!response.ok) {
-    throw new Error(payload?.message || `${method === 'GET' ? '读取' : '写入'}云端任务源失败`)
+    throw new Error(payload?.message || `${method === 'GET' ? '读取' : '写入'}任务数据失败`)
   }
 
   return payload
@@ -496,7 +493,7 @@ async function requestCanDoTasks(days) {
   return {
     days,
     targetDateKey: formatMonthDayKey(range.targetDate),
-    taskItems: [...taskItemMap.values()],
+    taskItems: [...taskItemMap.values()].sort((leftTask, rightTask) => compareTaskTime(leftTask, rightTask)),
     taskUrls: [...taskItemMap.values()].map((item) => item.url),
     total: taskItemMap.size,
   }
@@ -620,6 +617,8 @@ async function loadCanDoTasks() {
           ),
         )
       })
+
+      syncCurrentDateTaskOrder()
     }
 
     selectedDate.value = targetDateKey
@@ -669,7 +668,7 @@ async function loadSourceTasks() {
     applyTaskMap(payload?.taskMap || {})
   } catch (error) {
     sourceLoaded.value = false
-    lastSaveError.value = error.message || '读取云端任务源失败'
+    lastSaveError.value = error.message || '读取任务数据失败'
   } finally {
     loading.value = false
   }
@@ -689,10 +688,10 @@ async function saveTasksToSource({ silent = false } = {}) {
     lastSavedAt.value = new Date()
 
     if (!silent) {
-      ElMessage.success('已保存到 Supabase')
+      ElMessage.success('已保存任务变更')
     }
   } catch (error) {
-    lastSaveError.value = error.message || '写入云端任务源失败'
+    lastSaveError.value = error.message || '写入任务数据失败'
 
     if (!silent) {
       ElMessage.error(lastSaveError.value)
@@ -716,6 +715,11 @@ function scheduleAutoSave(delay = AUTO_SAVE_DELAY) {
   autoSaveTimer = setTimeout(() => {
     saveTasksToSource({ silent: true })
   }, delay)
+}
+
+function updateTaskTime(task, value) {
+  task.time = String(value || '').trim()
+  syncCurrentDateTaskOrder()
 }
 
 async function copyText(text) {
@@ -857,13 +861,14 @@ async function removeTask(taskId) {
   }
 
   taskList.splice(taskIndex, 1)
+  syncCurrentDateTaskOrder()
 
   if (!taskList.length) {
     delete groupedTasks.value[currentDate.value]
     selectedDate.value = sortedDates.value[0] || ''
   }
 
-  ElMessage.success('任务已删除，稍后会自动保存到 Supabase')
+  ElMessage.success('任务已删除，稍后会自动保存')
 }
 
 async function removeSelectedDateTasks() {
@@ -898,17 +903,10 @@ async function removeSelectedDateTasks() {
     selectedDate.value = nextDates[0] || ''
   }
 
-  ElMessage.success(`已删除 ${targetDateKey} 全部任务，稍后会自动保存到 Supabase`)
+  ElMessage.success(`已删除 ${targetDateKey} 全部任务，稍后会自动保存`)
 }
 
-onMounted(() => {
-  loadSourceTasks()
-  initTaskSorter()
-})
-
-onBeforeUnmount(() => {
-  destroyTaskSorter()
-})
+loadSourceTasks()
 
 watch(
   groupedTasks,
@@ -917,1017 +915,482 @@ watch(
   },
   { deep: true },
 )
-
-watch(
-  () => [currentDate.value, currentDateTasks.value.length],
-  () => {
-    initTaskSorter()
-  },
-)
 </script>
 
 <template>
-  <div class="page-shell">
-    <el-card class="toolbar-card" shadow="never">
-      <div class="panel-head">
-        <div class="panel-copy">
-          <div class="panel-badge">GALXE TASK CONSOLE</div>
-          <div class="panel-title">Galxe 任务控制台</div>
-          <div class="panel-subtitle">按日期加载、维护任务和查询结果，变更会自动保存到 Vercel API + Supabase。</div>
-        </div>
-
-        <div class="panel-stats">
-          <div class="panel-stat">
-            <span class="panel-stat-label">当前日期</span>
-            <strong class="panel-stat-value">{{ currentDate || '未选择' }}</strong>
-          </div>
-          <div class="panel-stat">
-            <span class="panel-stat-label">当日任务</span>
-            <strong class="panel-stat-value">{{ currentDateTasks.length }}</strong>
-          </div>
-          <div class="panel-stat">
-            <span class="panel-stat-label">总任务数</span>
-            <strong class="panel-stat-value">{{ totalTaskCount }}</strong>
-          </div>
-        </div>
+  <div class="page">
+    <header class="page__head">
+      <div class="page__title">
+        <h1>Galxe 任务面板</h1>
+        <p>按日期管理任务，列表按结束时间升序排列，编辑会自动保存</p>
       </div>
-
-      <div class="toolbar-row">
-        <div class="toolbar-left">
-          <el-date-picker
-            v-model="selectedDate"
-            type="date"
-            format="M月D日"
-            value-format="M.D"
-            placeholder="选择日期"
-            class="date-picker"
-          />
-
-          <el-select v-model="selectedDate" clearable placeholder="已有日期" class="date-select">
-            <el-option v-for="dateItem in sortedDates" :key="dateItem" :label="dateItem" :value="dateItem" />
-          </el-select>
-        </div>
-
-        <div class="toolbar-right">
-          <el-button type="primary" :loading="loadingCanDoTasks" @click="loadCanDoTasks">加载所选日期任务</el-button>
-          <el-button type="danger" plain @click="removeSelectedDateTasks">删除当前日期任务</el-button>
-        </div>
+      <div class="save-indicator" :class="`save-indicator--${saveIndicator.type}`">
+        <span class="save-indicator__dot"></span>
+        <span class="save-indicator__text">{{ saveIndicator.text }}</span>
       </div>
+    </header>
 
-      <div class="summary-row">
-        <el-tag :type="saveIndicator.type" effect="plain">{{ saveIndicator.text }}</el-tag>
-        <span class="summary-source">当前数据源：{{ SOURCE_PATH }}</span>
+    <section class="stats">
+      <div class="stat-card">
+        <span class="stat-card__label">当前日期</span>
+        <span class="stat-card__value font-data">{{ currentDate || '—' }}</span>
       </div>
-
-      <el-alert
-        class="status-alert"
-        :title="statusBanner.title"
-        :description="statusBanner.description"
-        :type="statusBanner.type"
-        :closable="false"
-        show-icon
-      />
-
-      <div class="summary-row summary-tip">
-        <span class="summary-text">
-          序号支持 `1-12` 勾选；“是否需要做”支持 `做 / 不做 / 待定`；任务可拖动排序；所有改动会自动保存到 Supabase。
-        </span>
+      <div class="stat-card">
+        <span class="stat-card__label">当日任务</span>
+        <span class="stat-card__value font-data">{{ currentDateTasks.length }}</span>
       </div>
-    </el-card>
+      <div class="stat-card">
+        <span class="stat-card__label">当日要做</span>
+        <span class="stat-card__value font-data">{{ currentDateDoneCount }}</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-card__label">当日待定</span>
+        <span class="stat-card__value font-data">{{ currentDatePendingCount }}</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-card__label">总任务</span>
+        <span class="stat-card__value font-data">{{ totalTaskCount }}</span>
+      </div>
+    </section>
 
-    <el-card class="table-card" shadow="never">
-      <template #header>
-        <div class="table-header">
-          <div>
-            <div class="table-title">Galxe 任务列表</div>
-            <div class="table-subtitle">当前字段：拖动排序、结束时间、任务链接、序号、是否需要做、备注</div>
-          </div>
-          <div class="table-count">{{ currentDateTasks.length }} 条任务</div>
+    <section class="toolbar">
+      <div class="toolbar__group">
+        <el-date-picker
+          v-model="selectedDate"
+          type="date"
+          format="M月D日"
+          value-format="M.D"
+          placeholder="选择日期"
+          class="date-picker"
+        />
+        <el-select v-model="selectedDate" clearable placeholder="切换已有日期" class="date-select">
+          <el-option v-for="dateItem in sortedDates" :key="dateItem" :label="dateItem" :value="dateItem" />
+        </el-select>
+      </div>
+      <div class="toolbar__group">
+        <el-button type="primary" :loading="loadingCanDoTasks" @click="loadCanDoTasks">加载任务</el-button>
+        <el-button @click="removeSelectedDateTasks">清除当日</el-button>
+      </div>
+    </section>
+
+    <section class="task-section">
+      <header class="task-section__head">
+        <div class="task-section__title">
+          <h2>任务列表</h2>
+          <span class="task-section__count font-data">{{ currentDateTasks.length }} 条</span>
         </div>
-      </template>
+      </header>
 
-      <el-empty
-        v-if="!loading && !currentDateTasks.length"
-        description="当前日期没有任务，可点击“加载所选日期任务”"
-      />
+      <el-empty v-if="!loading && !currentDateTasks.length" description="当前日期暂无任务" />
 
-      <el-table
-        v-else
-        ref="taskTableRef"
-        v-loading="loading"
-        :data="currentDateTasks"
-        row-key="id"
-        border
-        class="task-table"
-        style="width: 100%"
-      >
-        <el-table-column label="拖动" width="72" align="center" class-name="drag-column">
-          <template #default>
-            <span class="drag-handle" title="拖动排序" aria-label="拖动排序"></span>
-          </template>
-        </el-table-column>
-        <el-table-column label="结束时间" min-width="140">
-          <template #default="scope">
-            <span class="text-cell time-text">{{ scope.row.time || '-' }}</span>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="Galxe 任务链接" min-width="520">
-          <template #default="scope">
-            <div class="url-cell">
-              <span v-if="scope.row.url" class="text-cell url-text" :title="scope.row.url">{{ scope.row.url }}</span>
-              <span v-else class="text-cell">-</span>
-            </div>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="序号" min-width="360">
-          <template #default="scope">
-            <div class="sequence-cell">
-              <el-checkbox-group v-model="scope.row.sequenceValues" class="sequence-group">
-                <el-checkbox v-for="item in sequenceOptions" :key="item" :label="item">{{ item }}</el-checkbox>
-              </el-checkbox-group>
-            </div>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="是否需要做" min-width="240" align="center">
-          <template #default="scope">
-            <div class="need-create-cell">
-              <el-radio-group v-model="scope.row.needCreate" class="need-create-group">
-                <el-radio-button v-for="item in needCreateOptions" :key="item.value" :value="item.value">{{ item.label }}</el-radio-button>
-              </el-radio-group>
-            </div>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="备注" min-width="220">
-          <template #default="scope">
-            <el-input v-model="scope.row.remark" placeholder="为空时默认空字符串" />
-          </template>
-        </el-table-column>
-
-        <el-table-column label="操作" fixed="right" min-width="220" align="center">
-          <template #default="scope">
-            <div class="action-cell">
-              <el-button
-                v-if="scope.row.url"
-                size="small"
-                plain
-                type="primary"
-                class="action-button"
-                @click="openTaskUrl(scope.row.url)"
-              >
-                打开
-              </el-button>
-              <el-button
-                v-if="scope.row.url"
-                size="small"
-                plain
-                type="primary"
-                class="action-button"
-                @click="copyText(scope.row.url)"
-              >
-                复制
-              </el-button>
-              <el-button
-                size="small"
-                plain
-                type="primary"
-                class="action-button"
-                :loading="queryingTaskId === scope.row.id"
-                @click="queryWinner(scope.row)"
-              >
-                查询
-              </el-button>
-              <el-button size="small" plain type="danger" class="action-button" @click="removeTask(scope.row.id)">
-                删除
-              </el-button>
-            </div>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+      <div v-else class="task-table-wrap" v-loading="loading">
+        <table class="task-table">
+          <thead>
+            <tr>
+              <th class="col-time">时间</th>
+              <th class="col-sequence">序号</th>
+              <th class="col-status">状态</th>
+              <th class="col-url">任务链接</th>
+              <th class="col-remark">备注</th>
+              <th class="col-actions">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="task in currentDateTasks" :key="task.id">
+              <td>
+                <el-input
+                  :model-value="task.time"
+                  maxlength="5"
+                  placeholder="HH:mm"
+                  size="small"
+                  class="font-data"
+                  @update:model-value="updateTaskTime(task, $event)"
+                />
+              </td>
+              <td>
+                <el-checkbox-group v-model="task.sequenceValues" class="sequence-grid">
+                  <el-checkbox v-for="item in sequenceOptions" :key="item" :label="item">{{ item }}</el-checkbox>
+                </el-checkbox-group>
+              </td>
+              <td>
+                <el-radio-group v-model="task.needCreate" size="small" class="status-group">
+                  <el-radio-button v-for="item in needCreateOptions" :key="item.value" :value="item.value">{{ item.label }}</el-radio-button>
+                </el-radio-group>
+              </td>
+              <td class="url-cell">
+                <div class="url-content">
+                  <a
+                    v-if="task.url"
+                    :href="task.url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="url-link font-data"
+                    :title="task.url"
+                  >{{ task.url }}</a>
+                  <span v-else class="url-empty">—</span>
+                </div>
+              </td>
+              <td>
+                <el-input v-model="task.remark" placeholder="备注" size="small" maxlength="20" />
+              </td>
+              <td class="actions-cell">
+                <el-button v-if="task.url" link type="primary" size="small" @click="copyText(task.url)">复制</el-button>
+                <el-button link type="primary" size="small" :loading="queryingTaskId === task.id" @click="queryWinner(task)">查询</el-button>
+                <el-button link type="danger" size="small" @click="removeTask(task.id)">删除</el-button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.page-shell {
-  position: relative;
-  width: 100%;
-  max-width: none;
-  margin: 0;
-  min-height: 100vh;
-  padding: 20px 22px 30px;
-  color: #d8e6ff;
-  background:
-    radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.14), transparent 26%),
-    radial-gradient(circle at 100% 0%, rgba(244, 114, 182, 0.12), transparent 24%),
-    radial-gradient(circle at 50% 100%, rgba(139, 92, 246, 0.12), transparent 30%),
-    linear-gradient(180deg, #04060b 0%, #070b14 48%, #04060b 100%);
-  overflow: hidden;
-  isolation: isolate;
+.page {
+  width: min(1280px, calc(100vw - 48px));
+  margin: 0 auto;
+  padding: 32px 0 64px;
 }
 
-.page-shell::before,
-.page-shell::after {
-  content: '';
-  position: absolute;
-  border-radius: 999px;
-  filter: blur(48px);
-  opacity: 0.42;
-  pointer-events: none;
-  z-index: -1;
-}
-
-.page-shell::before {
-  top: -90px;
-  left: -70px;
-  width: 280px;
-  height: 280px;
-  background: rgba(34, 211, 238, 0.24);
-}
-
-.page-shell::after {
-  top: 80px;
-  right: -110px;
-  width: 320px;
-  height: 320px;
-  background: rgba(168, 85, 247, 0.2);
-}
-
-.panel-head {
-  position: relative;
+.page__head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 18px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-  padding: 18px 20px;
-  border: 1px solid rgba(34, 211, 238, 0.16);
-  border-radius: 18px;
-  background:
-    linear-gradient(135deg, rgba(3, 8, 18, 0.98) 0%, rgba(8, 18, 34, 0.96) 52%, rgba(18, 8, 34, 0.94) 100%);
-  box-shadow:
-    0 24px 60px rgba(0, 0, 0, 0.42),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 0 0 1px rgba(34, 211, 238, 0.06);
-  overflow: hidden;
+  gap: 24px;
+  margin-bottom: 24px;
 }
 
-.panel-head::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(120deg, rgba(34, 211, 238, 0.08), rgba(34, 211, 238, 0) 28%, rgba(244, 114, 182, 0.08) 62%, rgba(244, 114, 182, 0) 82%);
-  pointer-events: none;
+.page__title h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
 }
 
-.panel-head::after {
-  content: '';
-  position: absolute;
-  right: -30px;
-  bottom: -76px;
-  width: 240px;
-  height: 240px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(34, 211, 238, 0.22) 0%, rgba(34, 211, 238, 0) 72%);
-  pointer-events: none;
+.page__title p {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.5;
 }
 
-.panel-copy,
-.panel-stats {
-  position: relative;
-  z-index: 1;
-}
-
-.panel-copy {
-  min-width: 260px;
-}
-
-.panel-badge {
+.save-indicator {
   display: inline-flex;
   align-items: center;
-  height: 28px;
-  padding: 0 12px;
-  border: 1px solid rgba(34, 211, 238, 0.22);
+  gap: 8px;
+  padding: 8px 16px;
+  border: 1px solid var(--border-color);
   border-radius: 999px;
-  background: rgba(34, 211, 238, 0.08);
-  color: #67e8f9;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-shadow: 0 0 18px rgba(34, 211, 238, 0.35);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 13px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-sm);
 }
 
-.panel-title {
-  margin-top: 14px;
-  font-size: 28px;
-  font-weight: 900;
-  line-height: 1.12;
-  letter-spacing: 0.01em;
-  color: #f8fbff;
-  text-shadow:
-    0 0 24px rgba(34, 211, 238, 0.22),
-    0 0 40px rgba(168, 85, 247, 0.12);
+.save-indicator__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
 }
 
-.panel-subtitle {
-  margin-top: 8px;
-  max-width: 560px;
-  color: rgba(216, 230, 255, 0.72);
-  font-size: 14px;
-  line-height: 1.7;
-}
+.save-indicator--success .save-indicator__dot { background-color: var(--success); }
+.save-indicator--info .save-indicator__dot { background-color: var(--info); }
+.save-indicator--warning .save-indicator__dot { background-color: var(--warning); }
+.save-indicator--danger .save-indicator__dot { background-color: var(--danger); }
 
-.panel-stats {
+.stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(112px, 1fr));
-  gap: 10px;
-  min-width: min(100%, 390px);
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
 }
 
-.panel-stat {
-  padding: 12px 14px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(14px);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 10px 20px rgba(0, 0, 0, 0.18);
-  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+.stat-card {
+  padding: 16px 20px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: var(--shadow-sm);
 }
 
-.panel-stat:hover {
-  transform: translateY(-2px);
-  border-color: rgba(34, 211, 238, 0.12);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 14px 24px rgba(34, 211, 238, 0.08);
+.stat-card__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-.panel-stat-label {
-  display: block;
-  color: rgba(191, 219, 254, 0.6);
-  font-size: 12px;
+.stat-card__value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1;
 }
 
-.panel-stat-value {
-  display: block;
-  margin-top: 6px;
-  color: #f8fbff;
-  font-size: 20px;
-  font-weight: 900;
-}
-
-.toolbar-card,
-.table-card {
-  position: relative;
-  overflow: hidden;
-  border: 1px solid rgba(34, 211, 238, 0.12);
-  border-radius: 20px;
-  background: rgba(5, 9, 18, 0.76);
-  box-shadow:
-    0 22px 48px rgba(0, 0, 0, 0.34),
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    0 0 0 1px rgba(34, 211, 238, 0.03);
-  backdrop-filter: blur(20px);
-  transition: transform 0.24s ease, box-shadow 0.24s ease, border-color 0.24s ease;
-}
-
-.toolbar-card:hover,
-.table-card:hover {
-  transform: translateY(-2px);
-  border-color: rgba(34, 211, 238, 0.2);
-  box-shadow:
-    0 28px 60px rgba(0, 0, 0, 0.42),
-    0 0 28px rgba(34, 211, 238, 0.08);
-}
-
-.toolbar-card::before,
-.table-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, rgba(34, 211, 238, 0), rgba(34, 211, 238, 0.95), rgba(168, 85, 247, 0.88), rgba(244, 114, 182, 0.75), rgba(244, 114, 182, 0));
-}
-
-.table-card {
-  margin-top: 18px;
-}
-
-:deep(.toolbar-card .el-card__body),
-:deep(.table-card .el-card__body) {
-  padding: 20px;
-}
-
-:deep(.table-card .el-card__header) {
-  padding: 18px 20px 14px;
-  border-bottom: 1px solid rgba(34, 211, 238, 0.08);
-  background: linear-gradient(180deg, rgba(7, 12, 24, 0.88) 0%, rgba(7, 12, 24, 0.74) 100%);
-}
-
-.toolbar-row {
+.toolbar {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 16px;
-  flex-wrap: nowrap;
-  align-items: center;
-  padding: 14px;
-  border: 1px solid rgba(34, 211, 238, 0.08);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.03);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  padding: 16px;
+  margin-bottom: 24px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
-.toolbar-left,
-.toolbar-right {
+.toolbar__group {
   display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
   align-items: center;
-}
-
-.toolbar-left {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(180px, 220px));
-  flex: 0 1 auto;
-  min-width: 0;
-  align-items: stretch;
-}
-
-.toolbar-right {
-  margin-left: auto;
-  flex: 0 0 auto;
+  gap: 12px;
 }
 
 .date-picker,
 .date-select {
-  width: 100%;
+  width: 160px;
 }
 
-:deep(.toolbar-left > .el-select),
-:deep(.toolbar-left > .el-date-editor) {
-  width: 100%;
+.task-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
 }
 
-.summary-row {
+.task-section__head {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-muted);
+}
+
+.task-section__title {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 14px;
-  align-items: center;
-}
-
-.summary-tip {
-  margin-top: 12px;
-  padding: 12px 14px;
-  border: 1px solid rgba(168, 85, 247, 0.2);
-  border-radius: 14px;
-  background: linear-gradient(135deg, rgba(12, 18, 34, 0.94), rgba(18, 12, 34, 0.92));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-}
-
-.summary-text {
-  color: #b9c7de;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.summary-source {
-  display: inline-flex;
-  align-items: center;
-  height: 34px;
-  padding: 0 14px;
-  border: 1px solid rgba(34, 211, 238, 0.16);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  color: #93c5fd;
-  font-size: 13px;
-  font-weight: 700;
-  font-family: Consolas, 'Courier New', monospace;
-  letter-spacing: 0.01em;
-}
-
-.status-alert {
-  margin-top: 14px;
-}
-
-:deep(.status-alert.el-alert) {
-  border: 1px solid rgba(34, 211, 238, 0.12);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.04);
-  box-shadow: 0 16px 28px rgba(0, 0, 0, 0.18);
-}
-
-:deep(.status-alert .el-alert__title) {
-  font-size: 14px;
-  font-weight: 800;
-  color: #f8fbff;
-}
-
-:deep(.status-alert .el-alert__description) {
-  color: #a8b8d4;
-  line-height: 1.7;
-}
-
-.table-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  align-items: baseline;
   gap: 12px;
 }
 
-.table-title {
-  font-size: 20px;
-  font-weight: 900;
-  color: #f8fbff;
-  text-shadow: 0 0 22px rgba(34, 211, 238, 0.16);
+.task-section__title h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
-.table-subtitle {
-  margin-top: 6px;
-  color: #7f8ea8;
+.task-section__count {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.task-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.task-table {
+  width: 100%;
+  border-collapse: collapse;
   font-size: 13px;
 }
 
-.table-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 34px;
-  padding: 0 14px;
-  border: 1px solid rgba(34, 211, 238, 0.22);
-  border-radius: 999px;
-  background: rgba(34, 211, 238, 0.08);
-  color: #67e8f9;
-  font-size: 13px;
-  font-weight: 800;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 0 24px rgba(34, 211, 238, 0.08);
+.task-table th {
+  padding: 12px 16px;
+  text-align: left;
+  background: var(--bg-muted);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
 }
+
+.task-table td {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: middle;
+}
+
+.task-table tbody tr:hover {
+  background-color: var(--bg-muted);
+}
+
+.col-time { width: 100px; }
+.col-sequence { width: 220px; }
+.col-status { width: 180px; }
+.col-url { width: auto; }
+.col-remark { width: 160px; }
+.col-actions { width: 150px; text-align: right; }
 
 .url-cell {
-  min-width: 0;
+  max-width: 0;
 }
 
-.url-text {
-  display: block;
-  padding: 10px 12px;
-  border: 1px solid rgba(34, 211, 238, 0.08);
-  border-radius: 14px;
-  background: linear-gradient(135deg, rgba(10, 15, 28, 0.96), rgba(5, 9, 18, 0.98));
-  color: #d7e5ff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  font-family: Consolas, 'Courier New', monospace;
-  word-break: break-all;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+.url-content {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.url-text:hover {
-  transform: translateY(-1px);
-  border-color: rgba(34, 211, 238, 0.2);
-  box-shadow: 0 0 20px rgba(34, 211, 238, 0.08);
+.url-link {
+  color: var(--accent-primary);
+  text-decoration: none;
+  font-size: 12px;
 }
 
-.drag-handle {
-  display: inline-flex;
+.url-link:hover {
+  text-decoration: underline;
+}
+
+.url-empty {
+  color: var(--text-muted);
+}
+
+.actions-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sequence-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 2px;
+}
+
+.sequence-grid :deep(.el-checkbox) {
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-surface);
+  display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 10px;
-  border: 1px dashed rgba(34, 211, 238, 0.2);
-  background: rgba(15, 23, 42, 0.7);
-  cursor: grab;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
-.drag-handle::before {
-  content: '';
-  width: 12px;
-  height: 12px;
-  background:
-    repeating-linear-gradient(
-      90deg,
-      rgba(125, 211, 252, 0.8),
-      rgba(125, 211, 252, 0.8) 2px,
-      transparent 2px,
-      transparent 4px
-    );
-  opacity: 0.8;
+.sequence-grid :deep(.el-checkbox.is-checked) {
+  background-color: var(--accent-primary);
+  border-color: var(--accent-primary);
 }
 
-.drag-handle:active {
-  cursor: grabbing;
-}
-
-:deep(.task-table .drag-ghost > td.el-table__cell) {
-  background: rgba(34, 211, 238, 0.08) !important;
-  box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.2);
-}
-
-:deep(.task-table .drag-chosen > td.el-table__cell) {
-  background: rgba(125, 211, 252, 0.08) !important;
-}
-
-:deep(.task-table .drag-dragging > td.el-table__cell) {
-  background: rgba(15, 23, 42, 0.96) !important;
-  opacity: 0.9;
-}
-
-:deep(.toolbar-card .el-tag),
-:deep(.table-card .el-tag) {
-  --el-tag-bg-color: rgba(255, 255, 255, 0.04);
-  --el-tag-border-color: rgba(34, 211, 238, 0.14);
-  --el-tag-text-color: #d7e5ff;
-  padding: 0 14px;
-  height: 34px;
-  border-radius: 999px;
-  font-weight: 700;
-  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.12);
-}
-
-:deep(.toolbar-card .el-button),
-:deep(.table-card .el-button) {
-  height: 38px;
-  padding: 0 16px;
-  border-radius: 12px;
-  font-weight: 700;
-}
-
-:deep(.toolbar-right .el-button:not(.is-link)) {
-  border-color: rgba(34, 211, 238, 0.18);
-}
-
-:deep(.toolbar-right .el-button--primary) {
-  color: #05111c;
-  background: linear-gradient(135deg, #22d3ee 0%, #8b5cf6 58%, #f472b6 100%);
-  border-color: transparent;
-  box-shadow: 0 14px 26px rgba(34, 211, 238, 0.22);
-}
-
-:deep(.toolbar-right .el-button--primary:hover) {
-  background: linear-gradient(135deg, #67e8f9 0%, #a78bfa 58%, #fb7185 100%);
-  border-color: transparent;
-}
-
-:deep(.toolbar-card .el-input__wrapper),
-:deep(.toolbar-card .el-textarea__inner),
-:deep(.toolbar-card .el-select__wrapper),
-:deep(.toolbar-card .el-date-editor.el-input__wrapper) {
-  min-height: 42px;
-  border-radius: 14px;
-  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.1) inset;
-  background: rgba(2, 6, 15, 0.82);
-}
-
-:deep(.toolbar-left .el-input__wrapper),
-:deep(.toolbar-left .el-select__wrapper),
-:deep(.toolbar-left .el-date-editor.el-input__wrapper) {
-  height: 42px;
-}
-
-:deep(.toolbar-card .el-input__inner),
-:deep(.toolbar-card .el-select__placeholder),
-:deep(.toolbar-card .el-select__selected-item),
-:deep(.toolbar-card .el-date-editor input),
-:deep(.task-table .el-input__inner),
-:deep(.task-table .el-textarea__inner) {
-  color: #e7f0ff;
-}
-
-:deep(.toolbar-card .el-input__inner::placeholder),
-:deep(.task-table .el-input__inner::placeholder),
-:deep(.task-table .el-textarea__inner::placeholder) {
-  color: #6f819e;
-}
-
-:deep(.toolbar-card .el-icon),
-:deep(.toolbar-card .el-input__prefix-inner),
-:deep(.toolbar-card .el-input__suffix-inner),
-:deep(.toolbar-card .el-select__caret) {
-  color: #67e8f9;
-}
-
-:deep(.task-table) {
-  --el-table-border-color: rgba(34, 211, 238, 0.08);
-  --el-table-header-bg-color: rgba(8, 14, 28, 0.94);
-  --el-table-row-hover-bg-color: rgba(16, 25, 45, 0.94);
-  --el-table-bg-color: rgba(5, 9, 18, 0.72);
-  --el-fill-color-blank: rgba(5, 9, 18, 0.72);
-  color: #d8e6ff;
-  width: 100%;
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.06);
-}
-
-:deep(.task-table .el-table__inner-wrapper::before) {
+.sequence-grid :deep(.el-checkbox__input) {
   display: none;
 }
 
-:deep(.task-table .el-table__header-wrapper) {
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.22);
-}
-
-:deep(.task-table .el-table__header-wrapper th) {
-  color: #9ae6ff;
-  font-weight: 800;
-  background: linear-gradient(180deg, rgba(9, 16, 32, 0.98), rgba(6, 11, 22, 0.96));
-}
-
-:deep(.task-table .cell) {
-  color: #dbe7ff;
-}
-
-:deep(.task-table tr:nth-child(even) > td.el-table__cell) {
-  background: rgba(7, 12, 24, 0.9);
-}
-
-:deep(.task-table tr:nth-child(odd) > td.el-table__cell) {
-  background: rgba(4, 8, 16, 0.9);
-}
-
-:deep(.task-table tr:hover > td.el-table__cell) {
-  background: rgba(12, 19, 36, 0.98) !important;
-}
-
-:deep(.task-table td) {
-  padding-top: 14px;
-  padding-bottom: 14px;
-}
-
-:deep(.task-table .el-input__wrapper),
-:deep(.task-table .el-textarea__inner),
-:deep(.task-table .el-select__wrapper) {
-  border-radius: 12px;
-  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.08) inset;
-  background: rgba(6, 11, 22, 0.94);
-}
-
-:deep(.task-table .el-input__wrapper:hover),
-:deep(.task-table .el-textarea__inner:hover),
-:deep(.task-table .el-select__wrapper:hover) {
-  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.18) inset, 0 0 18px rgba(34, 211, 238, 0.05);
-}
-
-:deep(.table-card .el-empty) {
-  padding: 56px 0 50px;
-}
-
-:deep(.table-card .el-empty__description p) {
-  color: #7f8ea8;
-  font-weight: 700;
-}
-
-.action-cell {
-  display: grid;
-  grid-template-columns: repeat(2, 68px);
-  justify-content: center;
-  align-items: center;
-  gap: 6px;
-}
-
-:deep(.action-button) {
-  width: 68px;
-  height: 28px;
-  margin: 0;
+.sequence-grid :deep(.el-checkbox__label) {
   padding: 0;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 800;
-  border-color: rgba(34, 211, 238, 0.12);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
-  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-family: var(--font-data);
 }
 
-:deep(.action-button:hover) {
-  transform: translateY(-1px);
-}
-
-:deep(.action-button.el-button--primary) {
-  color: #7dd3fc;
-  background: rgba(255, 255, 255, 0.04);
-}
-
-:deep(.action-button.el-button--primary:hover) {
-  border-color: rgba(34, 211, 238, 0.28);
-  background: rgba(34, 211, 238, 0.08);
-  box-shadow: 0 0 20px rgba(34, 211, 238, 0.08);
-}
-
-:deep(.action-button.el-button--danger) {
-  color: #fb7185;
-  background: rgba(255, 255, 255, 0.04);
-}
-
-:deep(.action-button.el-button--danger:hover) {
-  border-color: rgba(251, 113, 133, 0.3);
-  background: rgba(251, 113, 133, 0.08);
-  box-shadow: 0 0 20px rgba(251, 113, 133, 0.08);
-}
-
-:deep(.action-button span) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-}
-
-.text-cell {
-  color: #dbe7ff;
-  line-height: 1.6;
-}
-
-.time-text {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 80px;
-  min-height: 34px;
-  padding: 0 12px;
-  border: 1px solid rgba(34, 211, 238, 0.22);
-  border-radius: 999px;
-  background: rgba(34, 211, 238, 0.08);
-  color: #67e8f9;
-  font-weight: 800;
-  box-shadow: 0 0 22px rgba(34, 211, 238, 0.08);
-}
-
-.sequence-cell {
-  min-width: 0;
-}
-
-.sequence-group {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(46px, 1fr));
-  gap: 6px 8px;
-}
-
-.need-create-cell {
-  display: flex;
-  justify-content: center;
-}
-
-.need-create-group {
-  display: flex;
-  flex-wrap: nowrap;
-  justify-content: center;
-  gap: 6px;
-}
-
-:deep(.sequence-group .el-checkbox) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  width: 100%;
-  min-width: 0;
-  min-height: 32px;
-  margin-right: 0;
-  padding: 0 6px;
-  border: 1px solid rgba(34, 211, 238, 0.08);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.16);
-  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
-}
-
-:deep(.sequence-group .el-checkbox:hover) {
-  transform: translateY(-1px);
-  border-color: rgba(34, 211, 238, 0.18);
-  background: rgba(34, 211, 238, 0.06);
-  box-shadow: 0 0 18px rgba(34, 211, 238, 0.06);
-}
-
-:deep(.sequence-group .el-checkbox.is-checked) {
-  background: linear-gradient(135deg, rgba(34, 211, 238, 0.1), rgba(168, 85, 247, 0.08));
-}
-
-:deep(.sequence-group .el-checkbox__input.is-checked .el-checkbox__inner) {
-  background: #22d3ee;
-  border-color: #22d3ee;
-}
-
-:deep(.sequence-group .el-checkbox__input) {
-  margin-right: 0;
-  flex: 0 0 auto;
-}
-
-:deep(.sequence-group .el-checkbox__inner) {
-  width: 13px;
-  height: 13px;
-}
-
-:deep(.sequence-group .el-checkbox__label) {
-  margin-left: 0;
-  padding-left: 0;
-  color: #d8e6ff;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
-:deep(.need-create-group .el-radio-button) {
-  margin: 0;
-}
-
-:deep(.need-create-group .el-radio-button__inner) {
-  min-width: 68px;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
-  border: none;
-  color: #d6e4ff;
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 30px;
-  box-shadow: 0 8px 14px rgba(0, 0, 0, 0.14);
-  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, color 0.18s ease;
-}
-
-:deep(.need-create-group .el-radio-button:not(.is-active) .el-radio-button__inner:hover) {
-  transform: translateY(-1px);
-  border-color: rgba(34, 211, 238, 0.24);
-  background: rgba(34, 211, 238, 0.08);
-  color: #eef6ff;
-}
-
-:deep(.need-create-group .el-radio-button.is-active .el-radio-button__inner) {
-  background: linear-gradient(135deg, rgba(34, 211, 238, 0.52), rgba(168, 85, 247, 0.44));
+.sequence-grid :deep(.el-checkbox.is-checked .el-checkbox__label) {
   color: #ffffff;
-  text-shadow: 0 0 10px rgba(255, 255, 255, 0.16);
-  box-shadow: 0 0 16px rgba(34, 211, 238, 0.16), 0 0 14px rgba(168, 85, 247, 0.1);
 }
 
-:deep(.task-table .el-input),
-:deep(.task-table .el-textarea),
-:deep(.task-table .el-input__wrapper) {
+.status-group {
   width: 100%;
+  display: flex;
 }
 
-@media (max-width: 900px) {
-  .page-shell {
-    padding: 14px;
+.status-group :deep(.el-radio-button) {
+  flex: 1;
+}
+
+.status-group :deep(.el-radio-button__inner) {
+  width: 100%;
+  padding: 6px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg-surface);
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+
+.status-group :deep(.el-radio-button.is-active:nth-child(1) .el-radio-button__inner) {
+  background-color: var(--success);
+  border-color: var(--success);
+  color: #ffffff;
+}
+
+.status-group :deep(.el-radio-button.is-active:nth-child(2) .el-radio-button__inner) {
+  background-color: var(--text-muted);
+  border-color: var(--text-muted);
+  color: #ffffff;
+}
+
+.status-group :deep(.el-radio-button.is-active:nth-child(3) .el-radio-button__inner) {
+  background-color: var(--warning);
+  border-color: var(--warning);
+  color: #ffffff;
+}
+
+/* Element Plus Customizations */
+:deep(.el-input__wrapper) {
+  background-color: var(--bg-surface);
+  box-shadow: 0 0 0 1px var(--border-color) inset;
+}
+
+:deep(.el-input__wrapper:hover) {
+  box-shadow: 0 0 0 1px var(--border-hover) inset;
+}
+
+:deep(.el-input.is-focus .el-input__wrapper) {
+  box-shadow: 0 0 0 1px var(--accent-primary) inset !important;
+}
+
+:deep(.el-input__inner) {
+  color: var(--text-primary);
+}
+
+@media (max-width: 1024px) {
+  .stats {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .page {
+    width: calc(100vw - 32px);
+    padding: 24px 0;
   }
 
-  .panel-head {
-    padding: 16px;
+  .stats {
+    grid-template-columns: repeat(2, 1fr);
   }
 
-  .panel-title {
-    font-size: 24px;
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
   }
 
-  .panel-stats {
-    grid-template-columns: 1fr;
-    width: 100%;
+  .toolbar__group {
+    justify-content: space-between;
   }
 
-  .date-picker,
-  .date-select {
-    width: 100%;
+  .date-picker, .date-select {
+    flex: 1;
   }
 
-  .toolbar-row {
-    flex-wrap: wrap;
-  }
-
-  .toolbar-left {
-    grid-template-columns: 1fr;
-    width: 100%;
-  }
-
-  .toolbar-right {
-    width: 100%;
-  }
-
-  :deep(.toolbar-right .el-button:not(.is-link)) {
-    width: 100%;
-  }
-
-  .table-header {
-    flex-wrap: wrap;
-    align-items: flex-start;
-  }
-
-  .sequence-group {
-    grid-template-columns: repeat(4, minmax(40px, 1fr));
-    gap: 6px;
-  }
-
-  .need-create-group {
-    flex-wrap: wrap;
+  .task-table {
+    min-width: 800px;
   }
 }
 </style>
+
 
 <style>
 .winner-result-box {
@@ -1936,11 +1399,13 @@ watch(
   height: min(80vh, 900px);
   max-height: calc(100vh - 24px);
   margin: 12px auto;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   padding: 0;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
 }
 
 .winner-result-modal .el-overlay-message-box {
@@ -1953,9 +1418,14 @@ body.winner-result-lock {
 
 .winner-result-box .el-message-box__header {
   padding: 18px 22px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
-  background: #ffffff;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-surface);
   flex-shrink: 0;
+}
+
+.winner-result-box .el-message-box__title {
+  color: var(--text-primary);
+  font-weight: 700;
 }
 
 .winner-result-box .el-message-box__content {
@@ -1965,6 +1435,7 @@ body.winner-result-lock {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  background-color: var(--bg-body);
 }
 
 .winner-result-box .el-message-box__container {
@@ -1991,8 +1462,8 @@ body.winner-result-lock {
 .winner-result-box .el-message-box__btns {
   flex-shrink: 0;
   padding: 14px 22px 18px;
-  border-top: 1px solid rgba(148, 163, 184, 0.12);
-  background: #ffffff;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-surface);
 }
 
 .winner-result-scroll {
@@ -2000,7 +1471,7 @@ body.winner-result-lock {
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  background: #f8fafc;
+  background: transparent;
   width: 100%;
 }
 
@@ -2013,7 +1484,8 @@ body.winner-result-lock {
   word-break: break-word;
   line-height: 1.6;
   background: transparent;
-  font-family: Consolas, 'Courier New', monospace;
+  color: var(--text-primary);
+  font-family: var(--font-data);
   min-height: 100%;
 }
 </style>

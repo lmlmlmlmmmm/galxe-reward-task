@@ -8,8 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server.js",
-    "start:server": "node server.js",
+    "server": "node server.js",
     "import:sqlite": "node scripts/import_sqlite.js",
+    "import:sqlite:cjs": "node --input-type=module --eval \"import('./scripts/import_sqlite.js')\""
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

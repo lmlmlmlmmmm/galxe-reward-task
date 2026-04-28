@@ -12,6 +12,53 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = __dirname
 const distDir = path.join(rootDir, 'dist')
 const publicIndexFile = path.join(distDir, 'index.html')
+const envFile = path.join(rootDir, '.env')
+
+function stripWrappingQuotes(value) {
+  if (value.length >= 2) {
+    const firstChar = value[0]
+    const lastChar = value[value.length - 1]
+
+    if ((firstChar === '"' && lastChar === '"') || (firstChar === "'" && lastChar === "'")) {
+      return value.slice(1, -1)
+    }
+  }
+
+  return value
+}
+
+async function loadEnvFile() {
+  try {
+    const content = await fs.readFile(envFile, 'utf8')
+
+    for (const line of content.split(/\r?\n/)) {
+      const trimmedLine = line.trim()
+      if (!trimmedLine || trimmedLine.startsWith('#')) {
+        continue
+      }
+
+      const separatorIndex = trimmedLine.indexOf('=')
+      if (separatorIndex <= 0) {
+        continue
+      }
+
+      const key = trimmedLine.slice(0, separatorIndex).trim()
+      const rawValue = trimmedLine.slice(separatorIndex + 1).trim()
+      if (!key || Object.prototype.hasOwnProperty.call(process.env, key)) {
+        continue
+      }
+
+      process.env[key] = stripWrappingQuotes(rawValue)
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      throw error
+    }
+  }
+}
+
+await loadEnvFile()
+
 const port = Number(process.env.PORT || 3000)
 
 const apiRoutes = new Map([
