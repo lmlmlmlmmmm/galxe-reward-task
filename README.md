@@ -16,6 +16,7 @@
 
 - `/api/tasks`
 - `/api/winners`
+- `/api/campaigns`
 
 这样敏感数据和服务端逻辑不会暴露到浏览器。
 

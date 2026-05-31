@@ -1,5 +1,4 @@
 <script setup>
-import axios from 'axios'
 import { computed, h, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -14,7 +13,7 @@ const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '').replace(/\/
 const SOURCE_PATH = '/api/tasks'
 const SOURCE_ENDPOINT = `${API_BASE_URL}/api/tasks`
 const WINNER_ENDPOINT = `${API_BASE_URL}/api/winners`
-const GALXE_ENDPOINT = 'https://graphigo.prd.galaxy.eco/query'
+const CAMPAIGN_ENDPOINT = `${API_BASE_URL}/api/campaigns`
 const AUTO_SAVE_DELAY = 400
 const DAY_MS = 24 * 60 * 60 * 1000
 const LOAD_TASK_PAGE_SIZE = 20
@@ -34,22 +33,6 @@ const needCreateTagTypeMap = {
   '2': 'info',
   '3': 'warning',
 }
-const GALXE_LOAD_TASK_QUERY = `query CampaignList($input: ListCampaignInput!) {
-  campaigns(input: $input) {
-    pageInfo {
-      endCursor
-      hasNextPage
-    }
-    list {
-      id
-      endTime
-      space {
-        alias
-      }
-    }
-  }
-}`
-
 const groupedTasks = ref({})
 const loading = ref(false)
 const saving = ref(false)
@@ -279,39 +262,25 @@ function getTargetUnixRange(days) {
   }
 }
 
-function buildLoadTaskPayload(page) {
+function buildLoadTaskInput(page) {
   return {
-    operationName: 'CampaignList',
-    variables: {
-      input: {
-        listType: 'Trending',
-        gasTypes: null,
-        excludeParent: false,
-        types: null,
-        rewardTypes: ['TOKEN', 'CUSTOM'],
-        chains: null,
-        isVerified: null,
-        statuses: ['Active'],
-        spaceCategories: null,
-        backers: null,
-        first: LOAD_TASK_PAGE_SIZE,
-        after: String(page),
-        searchString: null,
-        claimableByUser: null,
-        ecosystem: null,
-        isRecurring: false,
-      },
-    },
-    query: GALXE_LOAD_TASK_QUERY,
+    listType: 'Trending',
+    gasTypes: null,
+    excludeParent: false,
+    types: null,
+    rewardTypes: ['TOKEN', 'CUSTOM'],
+    chains: null,
+    isVerified: null,
+    statuses: ['Active'],
+    spaceCategories: null,
+    backers: null,
+    first: LOAD_TASK_PAGE_SIZE,
+    after: String(page),
+    searchString: null,
+    claimableByUser: null,
+    ecosystem: null,
+    isRecurring: false,
   }
-}
-
-function getAxiosErrorMessage(error, defaultMessage) {
-  const errorMessage = error?.response?.data?.errors?.map((item) => item.message).filter(Boolean).join('；')
-  const statusCode = error?.response?.status
-  const causeMessage = error?.cause?.message || error?.message || ''
-
-  return errorMessage || (statusCode ? `${defaultMessage}（${statusCode}）` : `${defaultMessage}：${causeMessage}`)
 }
 
 function buildExistingUrlSet() {
@@ -446,16 +415,23 @@ async function requestCanDoTasks(days) {
     let result = null
 
     try {
-      const response = await axios.post(GALXE_ENDPOINT, buildLoadTaskPayload(page), {
+      const response = await fetch(CAMPAIGN_ENDPOINT, {
+        method: 'POST',
         headers: {
-          accept: '*/*',
-          'content-type': 'application/json',
+          'Content-Type': 'application/json',
         },
-        timeout: 15000,
+        body: JSON.stringify({
+          input: buildLoadTaskInput(page),
+        }),
       })
-      result = response.data
+
+      result = await response.json().catch(() => null)
+
+      if (!response.ok) {
+        throw new Error(result?.message || '加载当前日期任务失败')
+      }
     } catch (error) {
-      throw new Error(getAxiosErrorMessage(error, '加载当前日期任务失败'))
+      throw new Error(error.message || '加载当前日期任务失败')
     }
 
     if (Array.isArray(result?.errors) && result.errors.length) {

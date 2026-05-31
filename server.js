@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import tasksHandler from './api/tasks.js'
 import winnersHandler from './api/winners.js'
+import campaignsHandler from './api/campaigns.js'
 import loginHandler from './api/auth/login.js'
 import logoutHandler from './api/auth/logout.js'
 import sessionHandler from './api/auth/session.js'
@@ -64,6 +65,7 @@ const port = Number(process.env.PORT || 3000)
 const apiRoutes = new Map([
   ['/api/tasks', tasksHandler],
   ['/api/winners', winnersHandler],
+  ['/api/campaigns', campaignsHandler],
   ['/api/auth/login', loginHandler],
   ['/api/auth/logout', logoutHandler],
   ['/api/auth/session', sessionHandler],
