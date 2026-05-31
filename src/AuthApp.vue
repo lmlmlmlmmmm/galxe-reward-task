@@ -18,7 +18,9 @@ async function checkSession() {
   checkingSession.value = true
 
   try {
-    const response = await fetch('/api/auth/session')
+    const response = await fetch('/api/auth/session', {
+      method: 'POST',
+    })
     const payload = await response.json().catch(() => null)
 
     if (!response.ok) {

@@ -17,7 +17,14 @@ export default async function handler(req, res) {
       return
     }
 
-    if (req.method === 'GET') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { message: 'Method Not Allowed' })
+      return
+    }
+
+    const action = String(req.body?.action || '').trim()
+
+    if (action === 'read') {
       const [taskMap, rawText] = await Promise.all([loadTasksAsTaskMap(), loadTasksAsRawText()])
       sendJson(res, 200, {
         taskMap,
@@ -27,7 +34,7 @@ export default async function handler(req, res) {
       return
     }
 
-    if (req.method === 'POST') {
+    if (action === 'write') {
       const rawText = typeof req.body?.rawText === 'string' ? req.body.rawText : null
       const taskMap = req.body?.taskMap && typeof req.body.taskMap === 'object' ? req.body.taskMap : null
 
@@ -46,7 +53,7 @@ export default async function handler(req, res) {
       return
     }
 
-    sendJson(res, 405, { message: 'Method Not Allowed' })
+    sendJson(res, 400, { message: 'action 仅支持 read 或 write' })
   } catch (error) {
     sendJson(res, 500, { message: error.message || '任务接口执行失败' })
   }

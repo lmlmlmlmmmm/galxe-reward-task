@@ -405,18 +405,20 @@ function applyTaskMap(taskMap) {
   }, 0)
 }
 
-async function requestSource(method, rawText = '') {
-  const requestBody =
-    method === 'POST'
-      ? JSON.stringify({
+async function requestSource(action, rawText = '') {
+  const requestBody = JSON.stringify(
+    action === 'write'
+      ? {
+          action,
           rawText,
           taskMap: buildSerializableTaskMap(),
-        })
-      : undefined
+        }
+      : { action },
+  )
 
   const response = await fetch(SOURCE_ENDPOINT, {
-    method,
-    headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: requestBody,
   })
 
@@ -429,7 +431,7 @@ async function requestSource(method, rawText = '') {
   }
 
   if (!response.ok) {
-    throw new Error(payload?.message || `${method === 'GET' ? '读取' : '写入'}任务数据失败`)
+    throw new Error(payload?.message || `${action === 'read' ? '读取' : '写入'}任务数据失败`)
   }
 
   return payload
@@ -664,7 +666,7 @@ async function loadSourceTasks() {
   loading.value = true
 
   try {
-    const payload = await requestSource('GET')
+    const payload = await requestSource('read')
     applyTaskMap(payload?.taskMap || {})
   } catch (error) {
     sourceLoaded.value = false
@@ -684,7 +686,7 @@ async function saveTasksToSource({ silent = false } = {}) {
   lastSaveError.value = ''
 
   try {
-    await requestSource('POST')
+    await requestSource('write')
     lastSavedAt.value = new Date()
 
     if (!silent) {

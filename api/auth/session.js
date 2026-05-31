@@ -6,7 +6,7 @@ function sendJson(res, statusCode, payload) {
 
 export default function handler(req, res) {
   try {
-    if (req.method !== 'GET') {
+    if (req.method !== 'POST') {
       sendJson(res, 405, { message: 'Method Not Allowed' })
       return
     }

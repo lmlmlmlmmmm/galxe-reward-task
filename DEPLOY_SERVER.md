@@ -246,8 +246,10 @@ pm2 restart galxe-task
 服务启动后，至少验证以下地址：
 
 ```bash
-curl -i http://127.0.0.1:3000/api/auth/session
-curl -i http://127.0.0.1:3000/api/tasks
+curl -i -X POST http://127.0.0.1:3000/api/auth/session
+curl -i -X POST http://127.0.0.1:3000/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"action":"read"}'
 ```
 
 说明：
